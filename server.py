@@ -1,32 +1,33 @@
-from mcp.server.fastmcp import FastMCP
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from mcp.server.fastmcp import FastMCP
 from datetime import datetime
-from typing import List, Optional
+import uvicorn
 
-# Create the MCP server
+# Step 1 — Create MCP instance
 mcp = FastMCP("email-server")
 
-# -----------------------
-# TOOL 1: sendEmail
-# -----------------------
+# -------------------------------
+# Step 2 — Define Input Schemas
+# -------------------------------
+
 class SendEmailInput(BaseModel):
     to: str
     subject: str
     body: str
-    confirm: Optional[bool] = False
-    confirmOverride: Optional[bool] = False
+
+class SearchInput(BaseModel):
+    query: str
+
+# -------------------------------
+# Step 3 — Register Tools
+# -------------------------------
 
 @mcp.tool()
 def sendEmail(input: SendEmailInput):
-    """
-    Simulated email send.
-    Requires confirm=True or confirmOverride=True.
-    """
-    if not (input.confirm or input.confirmOverride):
-        return {"error": "Confirmation required before sending."}
-    
-    print("✅ sendEmail tool triggered")
-    print(f"[{datetime.now()}] Simulating send to {input.to}")
+    """Mock email sender."""
+    print(f"[{datetime.now()}] Sending mock email to {input.to}")
     print(f"Subject: {input.subject}")
     print(f"Body: {input.body}\n")
 
@@ -37,148 +38,104 @@ def sendEmail(input: SendEmailInput):
         "messageId": f"mock-{int(datetime.now().timestamp())}"
     }
 
-# -----------------------
-# TOOL 2: draftEmail
-# -----------------------
-class DraftEmailInput(BaseModel):
-    to: Optional[str] = None
-    subject: Optional[str] = None
-    body: str
-    tone: Optional[str] = "concise"
-
 @mcp.tool()
-def draftEmail(input: DraftEmailInput):
-    """
-    Create a draft email.
-    """
-    print("📝 draftEmail tool triggered")
-    print(f"To: {input.to or '(not set yet)'}")
-    print(f"Subject: {input.subject or '(suggested later)'}")
-    print(f"Body: {input.body}\n")
-
+def saveDraft(input: SendEmailInput):
+    """Saves an email as a draft (mock)."""
+    print(f"[{datetime.now()}] Saving draft for {input.to}")
     return {
-        "draftId": f"draft-{int(datetime.now().timestamp())}",
-        "subject": input.subject or "Draft Subject",
-        "body": input.body
+        "status": "draft_saved",
+        "to": input.to,
+        "subject": input.subject,
+        "savedAt": datetime.now().isoformat()
     }
 
-# -----------------------
-# TOOL 3: searchMailbox
-# -----------------------
-class SearchMailboxInput(BaseModel):
-    query: Optional[str] = None
-    from_: Optional[str] = None
-    subject: Optional[str] = None
-    startDate: Optional[str] = None
-    endDate: Optional[str] = None
-    folder: Optional[str] = "inbox"
-    limit: Optional[int] = 5
-
 @mcp.tool()
-def searchMailbox(input: SearchMailboxInput):
-    """
-    Mock search tool — returns placeholder results.
-    """
-    print("🔍 searchMailbox tool triggered")
-    print(f"Query: {input.query or 'none'} | Folder: {input.folder}\n")
-
-    results = [
-        {"id": f"msg-{i}", "from": "alice@example.com", "subject": f"Mock Email {i}",
-         "snippet": "This is a simulated email preview...", "date": str(datetime.now())}
-        for i in range(1, input.limit + 1)
-    ]
-
-    return {"results": results}
-
-# -----------------------
-# TOOL 4: getMessage
-# -----------------------
-class GetMessageInput(BaseModel):
-    id: str
-
-@mcp.tool()
-def getMessage(input: GetMessageInput):
-    """
-    Retrieve a mock email message by ID.
-    """
-    print("📬 getMessage tool triggered")
-    print(f"Fetching message ID: {input.id}\n")
-
+def getInboxSummary():
+    """Returns a mock summary of recent emails."""
     return {
-        "id": input.id,
-        "from": "bob@example.com",
-        "to": ["user@example.com"],
-        "subject": "Mock Message",
-        "date": str(datetime.now()),
-        "body": "This is the content of the mock message.",
-        "attachments": []
+        "unread": 3,
+        "latest": [
+            {"from": "team@example.com", "subject": "Project Update"},
+            {"from": "hr@example.com", "subject": "Policy Change"},
+            {"from": "boss@example.com", "subject": "Meeting Reminder"},
+        ],
+        "timestamp": datetime.now().isoformat()
     }
 
-# -----------------------
-# TOOL 5: moveMessage
-# -----------------------
-class MoveMessageInput(BaseModel):
-    id: str
-    destination: str
-
 @mcp.tool()
-def moveMessage(input: MoveMessageInput):
-    """
-    Mock moving a message to a folder.
-    """
-    print("📂 moveMessage tool triggered")
-    print(f"Moving {input.id} to {input.destination}\n")
+def searchEmails(input: SearchInput):
+    """Search inbox for matching messages (mock)."""
+    print(f"[{datetime.now()}] Searching inbox for query: {input.query}")
+    return {
+        "query": input.query,
+        "results": [
+            {"from": "noreply@example.com", "subject": "Receipt for your order"},
+            {"from": "support@example.com", "subject": f"Follow-up: {input.query}"},
+        ],
+        "timestamp": datetime.now().isoformat()
+    }
 
-    return {"id": input.id, "status": "moved", "destination": input.destination}
+# -------------------------------
+# Step 4 — Build FastAPI App
+# -------------------------------
 
-# -----------------------
-# TOOL 6: markRead
-# -----------------------
-class MarkReadInput(BaseModel):
-    id: str
-    isRead: bool
+app = FastAPI(title="Email MCP Server")
 
-@mcp.tool()
-def markRead(input: MarkReadInput):
-    """
-    Toggle message read/unread.
-    """
-    print("👁️ markRead tool triggered")
-    print(f"Message {input.id} marked as {'read' if input.isRead else 'unread'}\n")
+# Global exception handler
+@app.exception_handler(Exception)
+async def unhandled_exc(_, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"error": type(exc).__name__, "detail": str(exc)},
+    )
 
-    return {"id": input.id, "isRead": input.isRead}
+# Health check
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
-# -----------------------
-# TOOL 7: suggestSubject
-# -----------------------
-class SuggestSubjectInput(BaseModel):
-    body: str
-    style: Optional[str] = "concise"
+# List all tools
+@app.get("/tools")
+async def list_tools():
+    tools = await mcp.list_tools()
+    names = [t.name for t in tools]
+    return {"tools": names}
 
-@mcp.tool()
-def suggestSubject(input: SuggestSubjectInput):
-    """
-    Suggest subject lines from body text.
-    """
-    print("💡 suggestSubject tool triggered")
-    print(f"Generating subject for style: {input.style}\n")
+# Get a specific tool
+@app.get("/tools/{tool_name}")
+async def get_tool(tool_name: str):
+    tools = await mcp.list_tools()
+    tool_names = [t.name for t in tools]
+    if tool_name not in tool_names:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    return {"tool": tool_name}
 
-    suggestions = [
-        "Quick update",
-        "Follow-up from our meeting",
-        "Next steps",
-        "Action required"
-    ]
+# Execute a tool
+@app.post("/tools/{tool_name}")
+async def call_tool(tool_name: str, request: Request):
+    payload = await request.json()
 
-    return {"suggestions": suggestions[:3]}
+    # Validate that the tool exists
+    tools = await mcp.list_tools()
+    tool_names = [t.name for t in tools]
+    if tool_name not in tool_names:
+        raise HTTPException(status_code=404, detail="Tool not found")
 
-# -----------------------
-# Run MCP Server
-# -----------------------
+    # Execute the tool
+    result = await mcp.call_tool(tool_name, payload)
+    return {"result": result}
+
+# -------------------------------
+# Step 5 — Run Server
+# -------------------------------
+
 if __name__ == "__main__":
-    import uvicorn
-    print("🚀 Starting MCP server...")
-    uvicorn.run(mcp.fastapi_app, host="127.0.0.1", port=8000, log_level="info")
+    print("🚀 Starting custom FastAPI MCP server...")
+    uvicorn.run("server:app", host="127.0.0.1", port=8000, log_level="debug")
+
+
+
+#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
 
 
 
